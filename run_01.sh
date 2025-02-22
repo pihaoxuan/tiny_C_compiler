@@ -16,7 +16,7 @@ if [ -f "test.txt" ]; then
 fi
 
 #运行01.c并将输出重定向到test.txt
-#./01 test.c >> test.txt
-./01 test.c
+./01 test.c >> test.txt
+
 
 #echo "01.c解析完成"
