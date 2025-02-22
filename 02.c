@@ -72,10 +72,10 @@ void expression(int level)
 }
 
 // 循环读取文件，直到token小于0（因为token是ASCII，所以没有小于0 的情况，等于0就是结束符）
-void program()
-{
-    next();           // get next token
-    while (token > 0) // 不能用中文
+void program() {
+    next();                  // get next token
+    // while (token > 0)    //这样不能读取中文，因为中文的ASCII码大于0，转换成token的时候可能为负值
+    while (token != 0)      //改为token!=0
     {
         printf("token is: %c\n", token);
         next();
@@ -186,7 +186,11 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    if (!(src = old_src = malloc(poolsize)))
+    old_src = malloc(poolsize); // 分配内存,如果成功返回指针，否则返回NULL
+    if (old_src){
+        src = old_src;  //将old_src的地址赋值给src，方便后面next()函数使用
+    }
+    else
     {
         printf("could not malloc(%d) for source area\n", poolsize);
         return -1;
