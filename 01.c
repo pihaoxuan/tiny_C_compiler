@@ -5,16 +5,16 @@
 #include <fcntl.h>
 #define int long long
 
-int token;
-wchar_t *src, *old_src;
-int poolsize;
-int line;
+// 全局数据结构
+int token;          // 当前解析的token值
+wchar_t *src;       // 源代码指针（使用宽字符处理多语言）
+wchar_t *old_src;   // 源代码起始地址备份
+int poolsize;       // 内存池大小（默认256KB）
+int line;           // 行号计数器
 
-//read the value of next char's ACSII
-void next()
-{
-    token = *src++;
-    return;
+// 词法分析核心函数
+void next() {
+    token = *src++; // 1. 读取当前字符 2. 指针前进
 }
 
 // pewpwd
@@ -23,25 +23,17 @@ void expression(int level)
     // do nothing
 }
 
-// 循环读取文件，直到token小于0（因为token是ASCII，所以没有小于0 的情况，等于0就是结束符）
-void program()
-{
-    next(); // get next token
-    while (token >0)//不能用中文
-    {
-        printf("token is: %c\n", token);
+// 语法分析入口（当前仅实现字符循环读取）
+void program() {
+    next(); 
+    while (token > 0) { // 主解析循环（0表示字符串终止符）
+        printf("token is: %c\n", token); // 调试输出
         next();
     }
 }
 
-// 虚拟机接口
-int eval()
-{ // do nothing yet
-    return 0;
-}
-
-int main(int argc, char **argv)
-{
+// 主程序流程
+int main(int argc, char **argv) {
     int i, fd;
 
     argc--;
