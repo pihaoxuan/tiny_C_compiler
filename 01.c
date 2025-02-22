@@ -22,7 +22,6 @@ void expression(int level)
 {
     // do nothing
 }
-
 // 语法分析入口（当前仅实现字符循环读取）
 void program() {
     next(); 
@@ -30,6 +29,10 @@ void program() {
         printf("token is: %c\n", token); // 调试输出
         next();
     }
+}
+int eval(){
+    //do nothing
+    return 0;
 }
 
 // 主程序流程
@@ -48,18 +51,20 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    if (!(src = old_src = malloc(poolsize)))
+    if (!(src = old_src = malloc(poolsize)))  //使用calloc初始化内存，代替malloc，初始化内存为0
+    // if(!(src = old_src = calloc(poolsize, sizeof(wchar_t))))
     {
-        printf("could not malloc(%d) for source area\n", poolsize);
+        printf("could not malloc(%lld) for source area\n", poolsize);
         return -1;
     }
 
     // read the source file
     if ((i = read(fd, src, poolsize - 1)) <= 0)
     {
-        printf("read() returned %d\n", i);
+        printf("read() returned %lld\n", i);
         return -1;
     }
+    printf("i=%d\n", i);
     src[i] = 0; // add EOF character
     close(fd);
 
