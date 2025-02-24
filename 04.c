@@ -1,0 +1,697 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <memory.h>
+#include <string.h>
+#include <fcntl.h>
+#define int long long
+
+int token = 0;
+char *src = 0;
+char *old_src = 0;
+int poolsize = 0;
+int line = 0;
+
+// 初始化text、old_text、stack、data
+int *text = 0;
+int  *old_text = 0;
+int *stack = 0;
+char *data = 0;
+
+//初始化bp基址寄存器指针、sp指向栈顶元素的指针寄存器、pc程序计数器、ax通用寄存器
+int *bp, *sp, *pc;
+int ax = 0;
+int cycle = 0;
+
+int token_val = 0;
+int *current_id = 0;
+int *symbols = 0;
+
+//标识符结构体
+struct identifier{
+    int token;
+    int hash;   //标识符的哈希值
+    char *name;
+    int type;   //标识符的类型，例如int float等
+    int class;  //如数字，局部变量，全局变量等
+    int value;  //标识符的值,函数则存函数地址
+    //Bxxxxx 表示当局部变量与全局变量重名时，保存全局变量的信息，如type class value等
+    int Btype;
+    int Bclass; 
+    int Bvalue;
+};
+
+
+//枚举指令集
+enum
+{
+    LEA,
+    IMM,
+    JMP,
+    CALL,
+    JZ,
+    JNZ,
+    ENT,
+    ADJ,
+    LEV,
+    LI,
+    LC,
+    SI,
+    SC,
+    PUSH,
+    OR,
+    XOR,
+    AND,
+    EQ,
+    NE,
+    LT,
+    GT,
+    LE,
+    GE,
+    SHL,
+    SHR,
+    ADD,
+    SUB,
+    MUL,
+    DIV,
+    MOD,
+    OPEN,
+    READ,
+    CLOS,
+    PRTF,
+    MALC,
+    MSET,
+    MCMP,
+    EXIT
+};
+
+enum{
+    Num=128,Fun,Sys,Glo,Loc,Id,
+    Char,Else,Enum,If,Int,Return,Sizeof,While,
+    Assign,Cond,Lor,Lan,Or,Xor,And,Eq,Ne,Lt,Gt,Le,Ge,
+    Shl, Shr, Add, Sub, Mul, Div, Mod,Inc,Dec,Brak
+};
+
+//将这些枚举值作为数组的索引，方便按名称访问，严格有序！！！！！！！！
+enum{
+    Token,Hash,Name,Type,Class,Value,Btype,Bclass,Bvalue,IdSize
+};
+
+enum{
+    CHAR,INT,PTR
+};
+
+// read the point of src and store the point in token as an integer.
+void next()
+{
+    char * last_pos = 0;
+    int hash = 0;
+    while (token = *src)
+    {
+        ++src;
+        if(token == '\n'){
+            ++line;
+        }
+        //宏定义直接跳过，因为不支持
+        else if (token == '#')
+        {
+            while(*src != 0 && *src != '\n'){
+                ++src;
+            } 
+        }
+        //识别标识符
+        else if ((token >= 'a' && token <= 'z') || (token >= 'A' && token <= 'Z') || token == '_')
+        {
+            last_pos = src - 1;
+            hash = token;
+
+            //符合变量命名的规则
+            while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || *src == '_')
+            {
+                hash = hash * 147 + *src;
+                src++;
+            }
+
+            //读完一个标识符后，在标识符表中线性查找,即查symbols数组
+            current_id = symbols;
+            while(current_id[Token]){
+                if(current_id[Hash] == hash && !memcmp((char *)current_id[Name],last_pos,src - last_pos)){
+                    token = current_id[Token];
+                    return;
+                }
+                current_id += IdSize;
+            }
+
+            //存新ID
+            current_id[Name] = (int)last_pos;
+            current_id[Hash] = hash;
+            token = current_id[Token] = Id;
+            return;
+            
+        }
+        //识别数字，有三种：十进制、十六进制（以0x开头）、八进制（以0开头）
+        else if (token >= '0' && token <= '9'){
+            token_val = token - '0';
+            //十进制
+            if(token_val > 0){
+                while((*src >= '0' && *src <= '9')){
+                    token_val = token_val * 10 + *src - '0';
+                    src++;
+                }
+            }
+            else if(token_val == 0){
+                //十六进制
+                if(*src == 'x' || *src == 'X'){
+                    src++;
+                    token = *src;
+                    while((token >= '0' && token <= '9') || (token >= 'a' && token <= 'f') || (token >= 'A' && token <= 'F')){
+                        //十六进制转十进制
+                        // token_val = token_val * 16 + (token >= '0' && token <= '9'? token - '0' : token - 'A' + 10);
+                        token_val = token_val * 16 + (token & 15) + (token >= 'A' ? 9 : 0);
+                    }
+                }
+                else if (*src >= '0' && *src <= '7'){
+                    //八进制
+                    while((*src >= '0' && *src <= '7')){
+                        token_val = token_val * 8 + *src - '0';
+                        src++;
+                    }
+                }
+                else{
+                    printf("error: unknow number type.\n only support dec(ex.123) hex(ex.0x123) and oct(ex.0123).");
+                }
+            }
+            else
+            {
+                printf("error: unknow number type.\n only support dec(ex.123) hex(ex.0x123) and oct(ex.0123).");
+            }
+            token = Num;
+            return;
+        }
+        //识别字符串
+        else if(token == '"' || token == '\''){
+            last_pos = data;
+            while(*src != token && *src != 0){
+                token_val = *src;
+                src++;
+                //遇到转义字符
+                if(token_val == '\\'){
+                    token_val = *src;
+                    src++;
+                    //特殊的转义字符
+                    if(token_val == 'n'){
+                        token_val = '\n';
+                    }
+                    else if(token_val == 't'){
+                        token_val = '\t';
+                    }
+                    else if(token_val == 'r'){
+                        token_val = '\r';
+                    }
+                    else if(token_val == 'b'){
+                        token_val = '\b';
+                    }
+                    else if(token_val == 'f'){
+                        token_val = '\f';
+                    }
+                    else if(token_val == 'v'){
+                        token_val = '\v';
+                    }
+                    else{
+                        printf("error: unknow escape character type.\n only support \\n \\t \\r \\b \\f and \\v");
+                    }
+                }
+                //字符串结束，逐个字符压入data中
+                if(token == '"'){
+                    *data = token_val;
+                    data++;
+                }
+            }
+            src++;
+            if(token == '"'){
+            token_val = (int)last_pos;
+            }else{
+                //单字符以对应数字返回
+                token = Num;
+            }
+            return;
+            
+        }
+        //识别注释，不支持/**/类注释，只支持逐行//类注释
+        else if(token == '/'){
+            if(*src == '/'){
+                //跳过这一行
+                while(*src!= 0 && *src!= '\n'){
+                    src++;
+                }
+            }
+
+            else{
+                token = Div;
+                return;
+            }
+
+        }
+        //识别运算符
+        else if(token == '='){
+            if(*src == '='){
+                token = Eq;
+            }
+            else{
+                token = Assign;
+            }
+            src++;
+            return;
+        }
+        else if (token == '+'){
+            if(*src == '+'){
+                token = Inc;
+            }
+            else{
+                token = Add;
+            }
+            src++;
+            return;
+        }
+        else if(token == '-'){
+            if(*src == '-'){
+                token = Dec;
+            }
+            else{
+                token = Sub;
+            }
+            src++;
+            return;
+        }
+        else if(token == '!'){
+            if(*src == '='){
+                token = Ne;
+            }
+            src++;
+            return;
+        }
+        else if(token == '<'){
+            if(*src == '='){
+                token = Le;
+            }
+            else if(*src == '<'){
+                token = Shl;
+            }
+            else{
+                token = Lt;
+            }
+            src++;
+            return;
+        }
+        else if(token == '>'){
+            if(*src == '='){
+                token = Ge;
+            }
+            else if(*src == '>'){
+                token = Shr;
+            }
+            else{
+                token = Gt;
+            }
+            src++;
+            return;
+        }
+        else if(token == '|'){
+            if(*src == '|'){
+                token = Lor;
+            }
+            else{
+                token = Or;
+            }
+            src++;
+            return;
+        }
+        else if(token == '&'){
+            if(*src == '&'){
+                token = Lan;
+            }
+            else{
+                token = And;
+            }
+            src++;
+            return;
+        }
+        else if(token == '^'){
+            token = Xor;
+            return;
+        }
+        else if(token == '*'){
+                token = Mul;
+                return;
+        }
+        else if(token == '%'){
+                token = Mod;
+                return;
+        }
+        else if(token == '['){
+                token = Brak;
+                return;
+        }
+        else if(token == '?'){
+            token = Cond;
+            return;
+        }
+        //遇到以下字符直接返回，但是为什么左中括号和右中括号分开了？？数组的原因？？ 对 就是因为数组的原因
+        else if(token == '~' || token == ';' || token == '{' || token == '}' || token == '(' || token == ')' || token == ',' || token == ']' || token == ':'){
+            return;
+        }
+        
+    }
+    return;
+}
+
+void expression(int level)
+{
+    // do nothing
+}
+
+// 循环读取文件，直到token小于0（因为token是ASCII，所以没有小于0 的情况，等于0就是结束符）
+void program() {
+    next();                  // get next token
+    // while (token > 0)    //这样不能读取中文，因为中文的ASCII码大于0，转换成token的时候可能为负值
+    while (token != 0)      //改为token!=0
+    {
+        printf("token is: %c\n", token);
+        next();
+    }
+}
+
+// 虚拟机接口
+int eval()
+{
+    int op, *tmp;
+    while (1)
+    {
+        op = *pc++; //初始化op为当前指令
+        if (op == IMM)  //将立即数载入ax
+        {
+            ax = *pc++;
+        }
+        else if (op == LC)  //将对应地址中的字符载入ax中，要求ax中存放地址
+        {
+            ax = *(char *)ax;
+        }
+        else if (op == LI)  //将对应地址中的整数载入ax中，要求ax中存放地址
+        {
+            ax = *(int *)ax;
+        }
+        else if (op == SC)  //将ax中的数据作为字符存入对应地址中，要求栈顶存放地址
+        {
+            ax = *(char *)*sp++ = ax;    //原写法
+            //新写法
+            // *sp = ax;
+            // ax = *(char *)*sp;
+            // sp++;
+
+
+        }
+        else if (op == SI)  //将ax中的数据作为整数存入对应地址中，要求栈顶存放地址
+        {
+            *(int *)*sp++ = ax; //原写法
+            //新写法
+            // *sp = ax;
+            // ax = *(int *)*sp;
+            // sp++;
+        }
+        else if (op == PUSH)    //将ax中的数据压入栈中
+        {
+            // *--sp = ax;  //原写法，太炫了，改成下面的写法
+            sp--;
+            *sp = ax;
+        }
+        else if (op == JMP)
+        {
+            pc = (int *)*pc;
+        }
+        else if (op == JZ)  //如果ax为0，跳转到对应地址，否则继续执行下一条指令
+        {
+            pc = ax ? pc + 1 : (int *)*pc;
+        }
+        else if (op == JNZ) //如果ax不为0，跳转到对应地址，否则继续执行下一条指令
+        {
+            pc = ax ? (int *)*pc : pc + 1;
+        }
+        else if (op == CALL)    //把现在在执行的指令的下一条压栈，然后转到子函数执行
+        {
+            sp--;
+            *sp = (int)(pc + 1);
+            pc = (int *)*pc;
+        }
+        else if (op == LEV) 
+        {
+            //将bp指向 原来指向的内容 所指向的内容，然后将这块空间出栈
+            sp = bp;
+            bp = (int *)*sp;
+            sp++;
+            
+            //从子函数返回
+            pc = (int *)*sp;
+            sp++;
+        }
+        else if (op == ENT)
+        {
+            sp--;
+            *sp = (int)bp;    //把bp这个地址作为数据压栈，即保留bp数据
+            bp = sp;
+            sp = sp - *pc;    //在栈上保留*pc这么多空间
+            pc++;             //pc指向下一条指令
+        }
+        else if (op == ADJ) //将调用子函数时压栈的数据清除
+        {
+            //回收*pc这么多空间，然后pc指向下一条指令
+            sp = sp + *pc;
+            pc++;
+        }
+
+        else if (op == LEA) //获取子函数参数地址,存入ax中
+        {
+            ax = (int)(bp + *pc);
+            pc++;
+        }
+
+
+        //以下是运算符指令实现,,栈顶元素与寄存器ax元素比较
+        else if (op == OR)
+        {
+            ax = *sp | ax;
+            sp++;
+        }
+        else if (op == XOR)
+        {
+            ax = *sp ^ ax;
+            sp++;
+        }
+        else if (op == AND)
+        {
+            ax = *sp & ax;
+            sp++;
+        }
+        else if (op == EQ)
+        {
+            ax = (*sp == ax);
+            sp++;
+        }
+        else if (op == NE){
+            ax = (*sp != ax);
+            sp++;
+        }
+        else if (op == LT)
+        {
+            ax = (*sp < ax);
+            sp++;
+        }
+        else if (op == LE){
+            ax = (*sp <= ax);
+            sp++;
+        }
+        else if (op == GT){
+            ax = (*sp > ax);
+            sp++;
+        }
+        else if (op == GE){
+            ax = (*sp >= ax);
+            sp++;
+        }
+        //栈顶元素向左移ax位
+        
+        else if (op == SHL){
+            ax = (*sp << ax);
+            sp++;
+        }
+        //栈顶元素向右移ax位
+        else if (op == SHR){
+            ax = (*sp >> ax);
+            sp++;
+        }
+        else if (op == ADD){
+            ax = (*sp + ax);
+            sp++;
+        }
+        else if (op == SUB){
+            ax = (*sp - ax);
+            sp++;
+        }
+        else if (op == MUL){
+            ax = (*sp * ax);
+            sp++;
+        }
+        else if (op == DIV){
+            ax = (*sp / ax);
+            sp++;
+        }
+        else if (op == MOD){
+            ax = (*sp % ax);
+            sp++;
+        }
+
+
+        //以下是内置函数exit open close read printf malloc memset memcpy函数实现
+        else if (op == EXIT){
+            printf("exit(%d)\n",*sp);
+            return *sp;
+        }
+        else if (op == OPEN){
+            //将sp[0]作为文件打开方式，sp[1]强转成char *作为文件名的地址，返回文件描述符存入ax中
+            //sp[0]是栈顶元素，sp[1]是栈顶下一个元素
+            ax = open((char *)sp[1], sp[0]);
+        }
+        else if (op == CLOS){
+            //将栈顶元素作为文件描述符，返回0表示成功，-1表示失败，存入ax中
+            //close(文件描述符)
+            ax = close(*sp);
+        }
+        else if (op == READ){
+            //将栈顶元素作为读取的长度，sp[1]作为缓冲区指针，sp[2]作为文件描述符，返回读取的字节数存入ax中。返回0：文件已到达末尾；返回-1：读取失败。
+            //read(文件描述符，缓冲区指针，读取字节数)
+            ax = read(sp[2], (char *)sp[1], *sp);
+        }
+        else if (op == PRTF){
+            tmp = sp + pc[1];
+            //printf返回成功输出字符数，存入ax中
+            ax = printf((char *)tmp[-1], tmp[-2], tmp[-3], tmp[-4], tmp[-5], tmp[-6]);
+        }
+        else if (op == MALC){
+            ax = (int)malloc(*sp);  //将malloc分配成功返回的地址作为longlong数据存放在ax中
+        }
+        else if (op == MSET){
+            //将memset返回的目标内存地址作为数据存入ax中
+            //memset(目标内存地址，初始化值，初始化长度) 返回 void *
+            ax = (int)memset((char *)sp[2], sp[1], *sp);
+        }
+        else if (op == MCMP){
+            //将比较结果作为数据存入ax中，相等返回0， 不等返回非0
+            //memecmp(串1，串2，比较长度)
+            ax = memcmp((char *)sp[2], (char *)sp[1], *sp);
+        }
+        else
+        {
+            printf("unknown instruction: %d\n", op);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    int i = 0;
+    int fd = 0;
+    int *idmain = 0;
+
+    argc--;
+    argv++;
+
+    poolsize = 1024 * 1024; // arbitrary size
+    line = 1;
+
+    if ((fd = open(*argv, 0)) < 0)
+    {
+        printf("could not open(%s)\n", *argv);
+        return -1;
+    }
+
+    old_src = malloc(poolsize); // 分配内存,如果成功返回指针，否则返回NULL
+    if (old_src){
+        src = old_src;  //将old_src的地址赋值给src，方便后面next()函数使用
+    }
+    else
+    {
+        printf("could not malloc(%d) for source area\n", poolsize);
+        return -1;
+    }
+
+    // read the source file
+    if ((i = read(fd, src, poolsize - 1)) <= 0)
+    {
+        printf("read() returned %d\n", i);
+        return -1;
+    }
+    src[i] = 0; // add EOF character
+    close(fd);
+
+    old_text = malloc(poolsize);
+    if (old_text)
+    {
+        text = old_text;
+    }
+    else
+    {
+        printf("COULD NOT MALLOC(%d) FOR TEXT AREA.\n", poolsize);
+        return -1;
+    }
+    if (!(data = malloc(poolsize)))
+    {
+        printf("could not malloc(%d) for data area.\n", poolsize);
+        return -1;
+    }
+    if (!(stack = malloc(poolsize)))
+    {
+        printf("could not malloc(%d) for stack area.\n");
+        return -1;
+    }
+    if(!(symbols = malloc(poolsize))){
+        printf("could not malloc(%d) for symbols table area.\n");
+        return -1;
+    }
+
+    //把text、data、stack,symbols内容全部置为0
+    memset(text, 0, poolsize);
+    memset(data, 0, poolsize);
+    memset(stack, 0, poolsize);
+    memset(symbols,0, poolsize);
+
+    //初始时sp指向栈底，即高地址，bp也指向栈底（现在还不用，栈内也没东西，就指向栈底了）
+    bp = sp = (int *)((int)stack + poolsize);
+    //ax一般用于存放计算结果，先置为0
+    ax = 0;
+
+    i = Char;
+    src = "char else enum if int return sizeof while"
+    "open read close printf malloc memset memcmp exit void main";
+
+    while(i <= While){
+        next();
+        current_id[Token] = i;
+        i++;
+    }
+    i = OPEN;
+    while(i <= EXIT){
+        next();
+        current_id[Class] = Sys;
+        current_id[Type] = INT;
+        current_id[Value] = i;
+        i++;
+    }
+    next();
+    current_id[Token] = Char;
+    next();
+    idmain = current_id;
+
+
+    program();
+    return eval();
+}
