@@ -5,11 +5,11 @@
 #include <fcntl.h>
 #define int long long
 
-int token;
+int token = 0;
 char *src = 0;
 char *old_src = 0;
-int poolsize;
-int line;
+int poolsize = 0;
+int line = 0;
 
 // 初始化text、old_text、stack、data
 int *text = 0;
@@ -21,6 +21,25 @@ char *data = 0;
 int *bp, *sp, *pc;
 int ax = 0;
 int cycle = 0;
+
+int token_val = 0;
+int *current_id = 0;
+int *symbols = 0;
+
+//标识符结构体
+struct identifier{
+    int token;
+    int hash;   //标识符的哈希值
+    char *name;
+    int type;   //标识符的类型，例如int float等
+    int class;  //如数字，局部变量，全局变量等
+    int value;  //标识符的值,函数则存函数地址
+    //Bxxxxx 表示当局部变量与全局变量重名时，保存全局变量的信息，如type class value等
+    int Btype;
+    int Bclass; 
+    int Bvalue;
+};
+
 
 //枚举指令集
 enum
@@ -72,10 +91,272 @@ enum{
     Shl, Shr, Add, Sub, Mul, Div, Mod,Inc,Dec,Brak
 };
 
+//将这些枚举值作为数组的索引，方便按名称访问，严格有序！！！！！！！！
+enum{
+    Token,Hash,Name,Type,Class,Value,Btype,Bclass,Bvalue,IdSize
+};
+
 // read the point of src and store the point in token as an integer.
 void next()
 {
-    token = *src++;
+    char * last_pos = 0;
+    int hash = 0;
+    while (token = *src)
+    {
+        ++src;
+        if(token == '\n'){
+            ++line;
+        }
+        //宏定义直接跳过，因为不支持
+        else if (token == '#')
+        {
+            while(*src != 0 && *src != '\n'){
+                ++src;
+            } 
+        }
+        //识别标识符
+        else if ((token >= 'a' && token <= 'z') || (token >= 'A' && token <= 'Z') || token == '_')
+        {
+            last_pos = src - 1;
+            hash = token;
+
+            //符合变量命名的规则
+            while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || *src == '_')
+            {
+                hash = hash * 147 + *src;
+                src++;
+            }
+
+            //读完一个标识符后，在标识符表中线性查找,即查symbols数组
+            current_id = symbols;
+            while(current_id[Token]){
+                if(current_id[Hash] == hash && !memcmp((char *)current_id[Name],last_pos,src - last_pos)){
+                    token = current_id[Token];
+                    return;
+                }
+                current_id += IdSize;
+            }
+
+            //存新ID
+            current_id[Name] = (int)last_pos;
+            current_id[Hash] = hash;
+            token = current_id[Token] = Id;
+            return;
+            
+        }
+        //识别数字，有三种：十进制、十六进制（以0x开头）、八进制（以0开头）
+        else if (token >= '0' && token <= '9'){
+            token_val = token - '0';
+            //十进制
+            if(token_val > 0){
+                while((*src >= '0' && *src <= '9')){
+                    token_val = token_val * 10 + *src - '0';
+                    src++;
+                }
+            }
+            else if(token_val == 0){
+                //十六进制
+                if(*src == 'x' || *src == 'X'){
+                    src++;
+                    token = *src;
+                    while((token >= '0' && token <= '9') || (token >= 'a' && token <= 'f') || (token >= 'A' && token <= 'F')){
+                        //十六进制转十进制
+                        // token_val = token_val * 16 + (token >= '0' && token <= '9'? token - '0' : token - 'A' + 10);
+                        token_val = token_val * 16 + (token & 15) + (token >= 'A' ? 9 : 0);
+                    }
+                }
+                else if (*src >= '0' && *src <= '7'){
+                    //八进制
+                    while((*src >= '0' && *src <= '7')){
+                        token_val = token_val * 8 + *src - '0';
+                        src++;
+                    }
+                }
+                else{
+                    printf("error: unknow number type.\n only support dec(ex.123) hex(ex.0x123) and oct(ex.0123).");
+                }
+            }
+            else
+            {
+                printf("error: unknow number type.\n only support dec(ex.123) hex(ex.0x123) and oct(ex.0123).");
+            }
+            token = Num;
+            return;
+        }
+        //识别字符串
+        else if(token == '"' || token == '\''){
+            last_pos = data;
+            while(*src != token && *src != 0){
+                token_val = *src;
+                src++;
+                //遇到转义字符
+                if(token_val == '\\'){
+                    token_val = *src;
+                    src++;
+                    //特殊的转义字符
+                    if(token_val == 'n'){
+                        token_val = '\n';
+                    }
+                    else if(token_val == 't'){
+                        token_val = '\t';
+                    }
+                    else if(token_val == 'r'){
+                        token_val = '\r';
+                    }
+                    else if(token_val == 'b'){
+                        token_val = '\b';
+                    }
+                    else if(token_val == 'f'){
+                        token_val = '\f';
+                    }
+                    else if(token_val == 'v'){
+                        token_val = '\v';
+                    }
+                    else{
+                        printf("error: unknow escape character type.\n only support \\n \\t \\r \\b \\f and \\v");
+                    }
+                }
+                //字符串结束，逐个字符压入data中
+                if(token == '"'){
+                    *data = token_val;
+                    data++;
+                }
+            }
+            src++;
+            if(token == '"'){
+            token_val = (int)last_pos;
+            }else{
+                //单字符以对应数字返回
+                token = Num;
+            }
+            return;
+            
+        }
+        //识别注释，不支持/**/类注释，只支持逐行//类注释
+        else if(token == '/'){
+            if(*src == '/'){
+                //跳过这一行
+                while(*src!= 0 && *src!= '\n'){
+                    src++;
+                }
+            }
+
+            else{
+                token = Div;
+                return;
+            }
+
+        }
+        //识别运算符
+        else if(token == '='){
+            if(*src == '='){
+                token = Eq;
+            }
+            else{
+                token = Assign;
+            }
+            src++;
+            return;
+        }
+        else if (token == '+'){
+            if(*src == '+'){
+                token = Inc;
+            }
+            else{
+                token = Add;
+            }
+            src++;
+            return;
+        }
+        else if(token == '-'){
+            if(*src == '-'){
+                token = Dec;
+            }
+            else{
+                token = Sub;
+            }
+            src++;
+            return;
+        }
+        else if(token == '!'){
+            if(*src == '='){
+                token = Ne;
+            }
+            src++;
+            return;
+        }
+        else if(token == '<'){
+            if(*src == '='){
+                token = Le;
+            }
+            else if(*src == '<'){
+                token = Shl;
+            }
+            else{
+                token = Lt;
+            }
+            src++;
+            return;
+        }
+        else if(token == '>'){
+            if(*src == '='){
+                token = Ge;
+            }
+            else if(*src == '>'){
+                token = Shr;
+            }
+            else{
+                token = Gt;
+            }
+            src++;
+            return;
+        }
+        else if(token == '|'){
+            if(*src == '|'){
+                token = Lor;
+            }
+            else{
+                token = Or;
+            }
+            src++;
+            return;
+        }
+        else if(token == '&'){
+            if(*src == '&'){
+                token = Lan;
+            }
+            else{
+                token = And;
+            }
+            src++;
+            return;
+        }
+        else if(token == '^'){
+            token = Xor;
+            return;
+        }
+        else if(token == '*'){
+                token = Mul;
+                return;
+        }
+        else if(token == '%'){
+                token = Mod;
+                return;
+        }
+        else if(token == '['){
+                token = Brak;
+                return;
+        }
+        else if(token == '?'){
+            token = Cond;
+            return;
+        }
+        //遇到以下字符直接返回，但是为什么左中括号和右中括号分开了？？数组的原因？？ 对 就是因为数组的原因
+        else if(token == '~' || token == ';' || token == '{' || token == '}' || token == '(' || token == ')' || token == ',' || token == ']' || token == ':'){
+            return;
+        }
+        
+    }
     return;
 }
 

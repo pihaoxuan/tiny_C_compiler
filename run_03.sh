@@ -11,12 +11,12 @@ else
 fi
 
 #检测test.txt是否存在，存在则删除
-if [ -f "03test.txt" ]; then
-    rm 03test.txt
+if [ -f "./output_set/03test.txt" ]; then
+    rm ./output_set/03test.txt
 fi
 
 #运行03.c并将输出重定向到03test.txt
-./03 test.c >> 03test.txt
+./03 test.c >> ./output_set/03test.txt
 
 
 echo "03.c解析test.c完成,生成文件03test.txt"

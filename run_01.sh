@@ -11,8 +11,8 @@ else
 fi
 
 #检测test.txt是否存在，存在则删除
-if [ -f "01test.txt" ]; then
-    rm 01test.txt
+if [ -f "./output_set/01test.txt" ]; then
+    rm ./output_set/01test.txt
 fi
 
 #运行01.c并将输出重定向到test.txt
