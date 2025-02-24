@@ -96,6 +96,10 @@ enum{
     Token,Hash,Name,Type,Class,Value,Btype,Bclass,Bvalue,IdSize
 };
 
+enum{
+    CHAR,INT,PTR
+};
+
 // read the point of src and store the point in token as an integer.
 void next()
 {
@@ -594,7 +598,9 @@ int eval()
 
 int main(int argc, char **argv)
 {
-    int i, fd;
+    int i = 0;
+    int fd = 0;
+    int *idmain = 0;
 
     argc--;
     argv++;
@@ -647,27 +653,44 @@ int main(int argc, char **argv)
         printf("could not malloc(%d) for stack area.\n");
         return -1;
     }
+    if(!(symbols = malloc(poolsize))){
+        printf("could not malloc(%d) for symbols table area.\n");
+        return -1;
+    }
 
-    //把text、data、stack内容全部置为0
+    //把text、data、stack,symbols内容全部置为0
     memset(text, 0, poolsize);
     memset(data, 0, poolsize);
     memset(stack, 0, poolsize);
+    memset(symbols,0, poolsize);
 
     //初始时sp指向栈底，即高地址，bp也指向栈底（现在还不用，栈内也没东西，就指向栈底了）
     bp = sp = (int *)((int)stack + poolsize);
     //ax一般用于存放计算结果，先置为0
     ax = 0;
 
-    i = 0;
-    text[i++] = IMM;
-    text[i++] = 10;
-    text[i++] = PUSH;
-    text[i++] = IMM;
-    text[i++] = 20;
-    text[i++] = ADD;
-    text[i++] = PUSH;
-    text[i++] = EXIT;
-    pc = text;
+    i = Char;
+    src = "char else enum if int return sizeof while"
+    "open read close printf malloc memset memcmp exit void main";
+
+    while(i <= While){
+        next();
+        current_id[Token] = i;
+        i++;
+    }
+    i = OPEN;
+    while(i <= EXIT){
+        next();
+        current_id[Class] = Sys;
+        current_id[Type] = INT;
+        current_id[Value] = i;
+        i++;
+    }
+    next();
+    current_id[Token] = Char;
+    next();
+    idmain = current_id;
+
 
     program();
     return eval();
