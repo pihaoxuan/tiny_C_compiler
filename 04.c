@@ -26,6 +26,10 @@ int token_val = 0;
 int *current_id = 0;
 int *symbols = 0;
 
+//初始化定义类型，表达式类型
+int basetype = 0;
+int expr_type = 0;
+
 //标识符结构体
 struct identifier{
     int token;
@@ -96,9 +100,120 @@ enum{
     Token,Hash,Name,Type,Class,Value,Btype,Bclass,Bvalue,IdSize
 };
 
+//char int pointer 三种类型
 enum{
     CHAR,INT,PTR
 };
+
+void match(int tk){
+    if(token == tk){
+        next();
+    }
+    else{
+        printf("expexted token: %d(%c), got token: %d(%c)\n",tk,tk,token,token);
+        exit(-1);
+    }
+}
+
+void global_declaration(){
+    // global_declaration ::= enum_decl | variable_decl | function_decl
+    // enum_decl ::= 'enum' [id] '{' id ['=' 'num'] {',' id ['=' 'num'] } '}'
+    // variable_decl ::= type {'*'} id { ',' {'*'} id } ';'
+    // function_decl ::= type {'*'} id '(' parameter_decl ')' '{' body_decl '}'
+    int type = 0;
+    int i = 0;
+    basetype = INT;
+    //匹配枚举类型
+    if (token == Enum){
+        match(Enum);
+        if(token != '{'){
+            match(Id);
+        }
+        if(token == '{'){
+            match('{');
+            //枚举声明
+            enum_declaration();
+            match('}');
+        }
+        match(';');
+        return ;
+    }
+    //匹配int类型
+    if(token == Int){
+        match(Int);
+    }
+    //匹配char类型
+    if(token == Char){
+        match(Char);
+        basetype = CHAR;
+    }
+    //上述都不是
+    while(token != ';' || token != '}'){
+        type = basetype;
+        //匹配指针定义类型 例如 int **abc;
+        while(token == '*'){
+            match(Mul);
+            //一级指针加一个PTR
+            type += PTR;
+        }
+        //检测是否符合标识符的命名规则
+        if(token != Id){
+            printf("%d:bad global declaration.\n",line);
+            exit(-1);
+        }
+        //检测是否重定义
+        if(current_id[Class]){
+            printf("%d:redeclaration of %s.\n",line,current_id[Name]);
+            exit(-1);
+        }
+        match(Id);
+        current_id[Type] = type;
+        //匹配函数定义
+        if(token = '('){
+            current_id[Class] = Fun;
+            current_id[Value] = (int)text+1;
+            //函数声明
+            function_declaration();//还未实现
+        }else{
+            //变量声明
+            current_id[Class] = Glo;
+            current_id[Value] = (int)data;
+            data = data + sizeof(int);
+        }
+        if(token = ','){
+            match(',');
+        }
+    }
+}
+
+void enum_declaration(){
+    int i = 0;
+    while(token!= '}'){
+        if(token != Id){
+            printf("%d:bad enum identifier:%d.\n",line,token);
+            exit(-1);
+        }
+        next();
+        if(token == Assign){
+            next();
+            if(token != Num){
+                printf("%d:bad enum value:%d.\n",line,token);
+                exit(-1);
+            }
+            i = token_val;
+            next();
+        }
+
+        current_id[Class] = Num;
+        current_id[Value] = i;
+        current_id[Type] = INT;
+        i++;
+    }
+}
+
+void function_declaration(){
+    //do noting
+}
 
 // read the point of src and store the point in token as an integer.
 void next()
@@ -124,7 +239,7 @@ void next()
             last_pos = src - 1;
             hash = token;
 
-            //符合变量命名的规则
+            //计算变量的哈希值
             while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || *src == '_')
             {
                 hash = hash * 147 + *src;
@@ -375,8 +490,7 @@ void program() {
     // while (token > 0)    //这样不能读取中文，因为中文的ASCII码大于0，转换成token的时候可能为负值
     while (token != 0)      //改为token!=0
     {
-        printf("token is: %c\n", token);
-        next();
+        global_declaration();
     }
 }
 
