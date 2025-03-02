@@ -11,12 +11,12 @@ char *old_src = 0;
 int poolsize = 0;
 int line = 0;
 
-//存储程序段的起始地址
+// 存储程序段（指令段、代码段）的起始地址
 int *text = 0;
 int *old_text = 0;
-//栈起始地址
+// 栈起始地址
 int *stack = 0;
-//数据段起始地址
+// 数据段起始地址
 char *data = 0;
 
 // 初始化bp基址寄存器指针、sp指向栈顶元素的指针寄存器、pc程序计数器、ax通用寄存器
@@ -241,7 +241,7 @@ void global_declaration()
         if (token = '(')
         {
             current_id[Class] = Fun;
-            //函数地址
+            // 函数地址
             current_id[Value] = (int)text + 1;
             // 函数声明
             function_declaration();
@@ -322,64 +322,6 @@ void function_declaration()
     }
 }
 
-void function_body()
-{
-    // body_decl ::= {variable_decl}{statement}
-    int pos_local = index_of_bp; // 局部变量地址
-    int type = 0;
-
-    //识别函数体内局部变量定义
-    while (token == Int || token == Char)
-    {
-        basetype = (token == Int) ? INT : CHAR;
-        match(token);
-        while(token != ';'){
-            type = basetype;
-            while(token == Mul){
-                match(Mul);
-                type += PTR;
-            }
-            if (token!= Id){
-                printf("%d:bad variable declaration.\n", line);
-                exit(-1);
-            }
-            if (current_id[Class] == Loc){
-                printf("%d:duplicate variable declaration.\n", line);
-                exit(-1);
-            }
-            match(Id);
-    
-            current_id[Bclass] = current_id[Class];
-            current_id[Class] = Loc;
-    
-            current_id[Btype] = current_id[Type];
-            current_id[Type] = type;
-    
-            current_id[Bvalue] = current_id[Value];
-            pos_local++;
-            //存下变量的地址，因为此时变量还没赋值
-            current_id[Value] = pos_local;
-    
-            if(token == ','){
-                match(',');
-            }
-    
-        }
-        match(';');
-    }
-    
-    text++;
-    *text = ENT;
-    text++;
-    *text = pos_local - index_of_bp;    //如果函数体内没有定义局部变量，pos_local - index_of_bp = 0
-
-    while(token!= '}'){
-        statement();
-    }
-    text++;
-    *text = LEV;
-
-}
 void function_parameter()
 {
     // parameter_decl ::= type {'*'} id {',' type {'*'} id | parameter_decl}
@@ -437,6 +379,160 @@ void function_parameter()
     }
     // bp向下为子函数局部变量地址
     index_of_bp = params + 1;
+}
+
+void function_body()
+{
+    // body_decl ::= {variable_decl}{statement}
+    int pos_local = index_of_bp; // 局部变量地址
+    int type = 0;
+
+    // 识别函数体内局部变量定义
+    while (token == Int || token == Char)
+    {
+        basetype = (token == Int) ? INT : CHAR;
+        match(token);
+        while (token != ';')
+        {
+            type = basetype;
+            while (token == Mul)
+            {
+                match(Mul);
+                type += PTR;
+            }
+            if (token != Id)
+            {
+                printf("%d:bad variable declaration.\n", line);
+                exit(-1);
+            }
+            if (current_id[Class] == Loc)
+            {
+                printf("%d:duplicate variable declaration.\n", line);
+                exit(-1);
+            }
+            match(Id);
+
+            current_id[Bclass] = current_id[Class];
+            current_id[Class] = Loc;
+
+            current_id[Btype] = current_id[Type];
+            current_id[Type] = type;
+
+            current_id[Bvalue] = current_id[Value];
+            pos_local++;
+            // 存下变量的地址，因为此时变量还没赋值
+            current_id[Value] = pos_local;
+
+            if (token == ',')
+            {
+                match(',');
+            }
+        }
+        match(';');
+    }
+
+    text++;
+    *text = ENT;
+    text++;
+    *text = pos_local - index_of_bp; // 如果函数体内没有定义局部变量，pos_local - index_of_bp = 0
+
+    while (token != '}')
+    {
+        statement();
+    }
+    text++;
+    *text = LEV;
+}
+
+void statement()
+{
+    // statement ::= non_empty_statement | empty_statement
+    // 只识别if-else while return expressuon 空语句 及 statement（即自己） 共6种语句
+
+    // 跳转地址标记
+    int *a, *b;
+
+    // 识别if-else
+    if (token == If)
+    {
+        match(If);
+        match('(');
+        expression(Assign);
+        match(')');
+
+        text++;
+        *text = JZ;
+        b = text + 1;
+
+        // 递归调用，处理嵌套语句
+        statement();
+
+        if (token == Else)
+        {
+            match(Else);
+            *b = (int)(text + 3);
+            text++;
+            *text = JMP;
+            b = text + 1;
+
+            // 处理嵌套语句
+            statement();
+        }
+
+        *b = (int)(text + 1);
+    }
+    // 识别while
+    else if (token == While)
+    {
+        match(While);
+
+        a = text + 1;
+
+        match('(');
+        expression(Assign);
+        match(')');
+
+        text++;
+        *text = JZ;
+        b = text + 1;
+
+        // 处理嵌套
+        statement();
+
+        text++;
+        *text = JMP;
+        text++;
+        *text = (int)a;
+        *b = (int)(text + 1);
+    }
+
+    //处理return语句
+    else if(token == Return){
+        match(Return);
+        
+        if(token != ';'){
+            expression(Assign);
+        }
+        match(';');
+        text++;
+        *text = LEV;
+    }
+
+    //处理其它语句
+    else if(token!= ';'){
+        match(';');
+    }
+    else if(token == '{'){
+        match('{');
+        while(token!= '}'){
+            statement();
+        }
+        match('}');
+    }
+    else{
+        expression(Assign);
+        match(';');
+    }
 }
 
 // read the point of src and store the point in token as an integer.
