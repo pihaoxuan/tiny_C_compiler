@@ -28,8 +28,9 @@ int token_val = 0;
 int *current_id = 0;
 int *symbols = 0;
 
-// 初始化定义类型，表达式类型
+// 初始化定义类型
 int basetype = 0;
+// 初始化表达式类型
 int expr_type = 0;
 
 // 调用子函数的地址基址
@@ -506,11 +507,13 @@ void statement()
         *b = (int)(text + 1);
     }
 
-    //处理return语句
-    else if(token == Return){
+    // 处理return语句
+    else if (token == Return)
+    {
         match(Return);
-        
-        if(token != ';'){
+
+        if (token != ';')
+        {
             expression(Assign);
         }
         match(';');
@@ -518,18 +521,22 @@ void statement()
         *text = LEV;
     }
 
-    //处理其它语句
-    else if(token!= ';'){
+    // 处理其它语句
+    else if (token != ';')
+    {
         match(';');
     }
-    else if(token == '{'){
+    else if (token == '{')
+    {
         match('{');
-        while(token!= '}'){
+        while (token != '}')
+        {
             statement();
         }
         match('}');
     }
-    else{
+    else
+    {
         expression(Assign);
         match(';');
     }
@@ -687,6 +694,7 @@ void next()
             src++;
             if (token == '"')
             {
+                // 字符串地址
                 token_val = (int)last_pos;
             }
             else
@@ -857,9 +865,293 @@ void next()
     return;
 }
 
-void expression(int level)
+void expression(int level) //传入的参数表示 优先级
 {
-    // do nothing
+
+    int *id;
+    int tmp;
+    int *addr;
+
+    // 数字常量
+    if (token == Num)
+    {
+        match(Num);
+        text++;
+        *text = IMM;
+        text++;
+        *text = token_val;
+        expr_type = INT;
+    }
+
+    // 字符串常量。注意支持跨行拼接
+    else if (token == '"')
+    {
+        text++;
+        *text = IMM;
+        text++;
+        *text = token_val;
+
+        // 前引号，match后token为后引号
+        match('"');
+        // 处理多行拼接情况
+        while (token == '"')
+        {
+            match('"');
+        }
+        //内存地址对齐的经典操作
+        data = (char *)(((int)data + sizeof(int)) & (-sizeof(int)));
+        expr_type = PTR;
+    }
+
+    // 处理sizeof，也算是一个一元运算符 只支持sizeof(int);sizeof(char)和sizeof(pointer type)
+    // 指针变量的size返回的也是int的大小
+    else if (token == Sizeof)
+    {
+        match(Sizeof);
+        match('(');
+        expr_type = INT;
+        if (token == Int)
+        {
+            match(Int);
+        }
+        else if (token == Char)
+        {
+            match(Char);
+            expr_type = CHAR;
+        }
+        while (token == Mul)
+        {
+            match(Mul);
+            expr_type += PTR;
+        }
+        match(')');
+        text++;
+        *text = IMM;
+        text++;
+        *text = (expr_type == CHAR) ? sizeof(char) : sizeof(int);
+        expr_type = INT;
+    }
+
+    // 变量与函数调用
+    else if (token == Id)
+    {
+        match(Id);
+        id = current_id;
+
+        if (token == '(')
+        {
+            match('(');
+
+            tmp = 0;
+            // 处理参数 将参数顺序压栈（标准C是逆序压栈） tmp记录参数个数
+            while (token != ')')
+            {
+                expression(Assign);
+                text++;
+                *text = PUSH;
+                tmp++;
+
+                if (token == ',')
+                {
+                    match(',');
+                }
+            }
+            match(')');
+
+            // 系统函数
+            if (id[Class] == Sys)
+            {
+                text++;
+                *text = id[Value];
+            }
+            // 自定义函数
+            else if (id[Class] == Fun)
+            {
+                text++;
+                *text = CALL;
+                text++;
+                *text = id[Value];
+            }
+            else
+            {
+                printf("error: %d line: %d, %s is not a function or variable.\n", line, id[Name], id[Name]);
+                exit(-1);
+            }
+
+            // 清空栈内子函数的参数
+            if (tmp > 0)
+            {
+                text++;
+                //ADJ:回收下一个地址存放的数值这么多的空间
+                *text = ADJ;
+                text++;
+                *text = tmp;
+            }
+            expr_type = id[Type];
+        }
+        //处理数值类id
+        else if(id[Class] == Num){
+            text++;
+            *text = IMM;
+            text++;
+            *text = id[Value];
+            expr_type = INT;
+        }
+        else{
+            if(id[Class] == Loc){
+                //局部变量加载值
+                text++;
+                //LEA：获取子函数参数地址
+                *text = LEA;
+                text++;
+                //基址减去id的地址
+                *text = index_of_bp - id[Value];
+            }
+            else if(id[Class] == Glo){
+                //全局变量直接加载值
+                text++;
+                *text = IMM;
+                text++;
+                *text = id[Value];
+            }
+            else{
+                printf("error: %d line: %d, %s is not a function or variable.\n", line, id[Name], id[Name]);
+                exit(-1);
+            }
+
+            expr_type = id[Type];
+            text++;
+            //LC：将对应地址中的字符载入ax中，要求ax中存放地址
+            //LI：将对应地址中的整数载入ax中，要求ax中存放地址
+            *text = (expr_type == Char) ? LC : LI;
+        }
+    }
+
+    //强制转换
+    else if(token =='('){
+        match('(');
+        if(token ==Int || token == Char){
+            tmp = (token == Char)? CHAR : INT;
+            match(token);
+            //强转成 指针变量
+            while(token == Mul){
+                match(Mul);
+                tmp += PTR;
+            }
+            match(')');
+            expression(Inc);
+            expr_type = tmp;
+        }
+        else{
+            expression(Assign);
+            match(')');
+        }
+    }
+    //指针取值
+    else if(token == Mul){
+        match(Mul);
+        expression(Inc);
+        if(expr_type >= PTR){
+            expr_type -= PTR;
+        }else{
+            printf("error: %d line: pointer type can't be dereferenced.\n", line);
+            exit(-1);
+        }
+        text++;
+        *text = (expr_type == CHAR)? LC : LI;
+    }
+    //取地址
+    else if(token == And){
+        match(And);
+        expression(Inc);
+        //如果是由LC或者LI而来的数据 则取地址就是不执行LC或LI之前的值，因此只需要执行text--就行
+        if(*text == LC || *text == LI){
+            text--;
+        }
+        //否则不能取地址
+        else{
+            printf("error: %d line:  Cannot fetch this address.\n", line);
+            exit(-1);
+        }
+    }
+    //逻辑反，使用0来取反
+    else if(token == '!'){
+        match('!');
+        expression(Inc);
+        text++;
+        *text = PUSH;
+        text++;
+        *text = IMM;
+        text++;
+        *text = 0;
+        text++;
+        *text = EQ;
+
+        expr_type = INT;
+    }
+    //按位取反，用异或实现，即 ~a ＝a 异或上 0xFFFF
+    else if(token == '~'){
+        match('~');
+        expression(Inc);
+        text++;*text = PUSH;
+        text++;*text = IMM;
+        text++;*text = -1;
+        text++;*text = XOR;
+
+        expr_type = INT;
+    }
+    //数值的正号
+    else if(token == AND){
+        match(AND);
+        expression(Inc);
+        expr_type = INT;
+    }
+    //数值的负号
+    else if(token == SUB){
+        match(SUB);
+        if(token == Num){
+            text++;*text = IMM;
+            text++;*text = -token_val;
+            match(Num);
+        }
+        //表达式结果取负号
+        else{
+            text++;*text = IMM;
+            text++;*text = -1;
+            text++;*text = PUSH;
+            //Inc的优先级高于乘法 能够保证先计算出表达式的值 再与-1相乘
+            expression(Inc);
+            text++;*text = MUL;
+        }
+
+        expr_type = INT;
+    }
+
+    //自增自减，此处只支持++p，对于p++，后面采用减一的方法实现
+    else if(token == Inc || token == Dec){
+        tmp = token;
+        match(token);
+        expression(Inc);
+        if(*text == LC){
+            *text = PUSH;
+            text++;*text = LC;
+        }
+        else if(*text == LI){
+            *text = PUSH;
+            text++;*text = LI;
+        }else{
+            printf("error: %d line: bad lvalue of pre-increment.\n", line);
+        }
+
+        text++;*text = PUSH;
+        text++;*text = IMM;
+        
+        //对指针进行自增自减(自增的长度)
+        text++;*text = (expr_type > PTR) ? sizeof(int) : sizeof(char);
+        text++;*text = (tmp == Inc)? ADD : SUB;
+        text++;*text = (expr_type == CHAR) ? SC : SI;
+    }
+    
 }
 
 // 循环读取文件，直到token小于0（因为token是ASCII，所以没有小于0 的情况，等于0就是结束符）
@@ -884,15 +1176,15 @@ int eval()
         {
             ax = *pc++;
         }
-        else if (op == LC) // 将对应地址中的字符载入ax中，要求ax中存放地址
+        else if (op == LC) // 将对应地址中的字符载入ax中，前提要求ax中是地址
         {
             ax = *(char *)ax;
         }
-        else if (op == LI) // 将对应地址中的整数载入ax中，要求ax中存放地址
+        else if (op == LI) // 将对应地址中的整数载入ax中，前提要求ax中是地址
         {
             ax = *(int *)ax;
         }
-        else if (op == SC) // 将ax中的数据作为字符存入对应地址中，要求栈顶存放地址
+        else if (op == SC) // 将ax中的数据作为字符存入对应地址中，前提要求栈顶中有地址
         {
             ax = *(char *)*sp++ = ax; // 原写法
             // 新写法
@@ -900,12 +1192,11 @@ int eval()
             //  ax = *(char *)*sp;
             //  sp++;
         }
-        else if (op == SI) // 将ax中的数据作为整数存入对应地址中，要求栈顶存放地址
+        else if (op == SI) // 将ax中的数据作为整数存入对应地址中，前提要求栈顶中有地址
         {
             *(int *)*sp++ = ax; // 原写法
             // 新写法
-            //  *sp = ax;
-            //  ax = *(int *)*sp;
+            //  (*(int *)*sp) = ax;
             //  sp++;
         }
         else if (op == PUSH) // 将ax中的数据压入栈中
